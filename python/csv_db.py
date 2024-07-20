@@ -51,13 +51,11 @@ def import_csv_to_db_delete(cur, csv_file, table_name):
         for row in reader:
             # Замена пустых строк на None для обработки NULL значений
             row = [None if val == '' else val for val in row]
-
             # Преобразование строк даты в формат datetime
             for idx in date_columns:
                 date_str = row[idx]
                 if date_str:
                     # Приводим дату к формату yyyy-MM-dd
-                    # print(row[idx], table_name)
                     row[idx] = convert_to_standard_format(date_str)
 
             cur.execute(
@@ -85,7 +83,6 @@ def import_csv_to_db(cur, csv_file, table_name, pk):
                 date_str = row[idx]
                 if date_str:
                     # Приводим дату к формату yyyy-MM-dd
-                    # print(row[idx], table_name)
                     row[idx] = convert_to_standard_format(date_str)
 
             cur.execute(
@@ -115,7 +112,6 @@ def import_csv_to_db_coding(cur, csv_file, table_name, pk):
                 date_str = row[idx]
                 if date_str:
                     # Приводим дату к формату yyyy-MM-dd
-                    # print(row[idx], table_name)
                     row[idx] = convert_to_standard_format(date_str)
 
             cur.execute(
@@ -137,7 +133,7 @@ def log_import(cur, log_table, csv, table, row_count, start_time, end_time):
         INSERT INTO {log_table} (file_name, table_name, start_time, end_time, row_count)
         VALUES (%s, %s, %s, %s, %s)
         """,
-        (Path(csv).name, table.split('.')[-1],
+        (Path(csv).name + ' import', table.split('.')[-1],
          start_time, end_time, row_count)
     )
 
@@ -152,12 +148,12 @@ def basic_flow():
     )
 
     # Пути к CSV файлам
-    csv_files = [r'C:\Users\Dasha\Desktop\project\files\ft_balance_f.csv',
-                 r'C:\Users\Dasha\Desktop\project\files\md_account_d.csv',
-                 r'C:\Users\Dasha\Desktop\project\files\md_exchange_rate_d.csv',
-                 r'C:\Users\Dasha\Desktop\project\files\md_ledger_account_s.csv',
-                 r'C:\Users\Dasha\Desktop\project\files\md_currency_d.csv',
-                 r'C:\Users\Dasha\Desktop\project\files\ft_posting_f.csv']
+    csv_files = [r'C:\Users\Dasha\Desktop\project\csv files\ft_balance_f.csv',
+                 r'C:\Users\Dasha\Desktop\project\csv files\md_account_d.csv',
+                 r'C:\Users\Dasha\Desktop\project\csv files\md_exchange_rate_d.csv',
+                 r'C:\Users\Dasha\Desktop\project\csv files\md_ledger_account_s.csv',
+                 r'C:\Users\Dasha\Desktop\project\csv files\md_currency_d.csv',
+                 r'C:\Users\Dasha\Desktop\project\csv files\ft_posting_f.csv']
 
     # Таблицы для импорта данных
     data_tables = ['DS.FT_BALANCE_F', 'DS.MD_ACCOUNT_D',
@@ -208,5 +204,63 @@ def basic_flow():
     conn.close()
 
 
+def one_flow():
+    # Подключения к базе данных
+    conn = psycopg2.connect(
+        host=HOST,
+        database=DATABASE,
+        user=USER,
+        password=PASSWORD
+    )
+
+    # Пути к CSV файлам
+    csv_file = r'C:\Users\Dasha\Desktop\project\csv files\dm _f101_round_f.csv'
+
+    # Таблицы для импорта данных
+    data_table = 'DM.DM_F101_ROUND_F_V_2'
+
+    # Таблица для логирования
+    log_table = 'logs.import'
+    cur = conn.cursor()
+    try:
+        # Подсчет количества строк в CSV файле
+        row_count = count_rows(csv_file)
+
+        # Время начала загрузки
+        start_time = datetime.now()
+
+        # Импорт данных из CSV файла в базу данных
+        import_csv_to_db_delete(cur, csv_file, data_table)
+
+        # Пауза 5 секунд
+        time.sleep(5)
+
+        # Время окончания загрузки
+        end_time = datetime.now()
+
+        # Запись данных о процессе импорта в таблицу логирования
+        log_import(cur, log_table, csv_file, data_table,
+                   row_count, start_time, end_time)
+
+        # Подтверждение всех изменений в базе данных
+        conn.commit()
+
+        print(
+            f"Данные из файла {Path(csv_file).name} успешно импортированы в базу данных PostgreSQL в таблицу {data_table}")
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
+        conn.rollback()
+
+    # Закрытие курсора и соединения
+    cur.close()
+    conn.close()
+
+
 if __name__ == "__main__":
-    basic_flow()
+    function = input(
+        "Введите 1 для вызова функции для всех файлов, 2 для функции для одного файла: ")
+    match function:
+        case '1':
+            basic_flow()
+        case '2':
+            one_flow()

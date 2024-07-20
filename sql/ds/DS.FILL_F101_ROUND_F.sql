@@ -1,0 +1,121 @@
+CREATE OR REPLACE PROCEDURE DS.FILL_F101_ROUND_F(I_ONDATE DATE)
+LANGUAGE PLPGSQL
+AS $$
+DECLARE
+    FROMDATE DATE;
+    TODATE DATE;
+    PREVDATE DATE;
+	START_TIME TIMESTAMP;
+	END_TIME TIMESTAMP;
+BEGIN
+    -- ПО УМОЛЧАНИЮ ПРИВОДИМ ДАТУ К 1 ЧИСЛУ МЕСЯЦА, ЕСЛИ ПОЛЬЗОВАТЕЛЬ УКАЗАЛ ЕЕ НЕПРАВИЛЬНО 
+    I_ONDATE= CAST(DATE_TRUNC('MONTH', i_ondate) AS DATE);
+
+    -- УСТАНОВЛЕНИЕ ЗНАЧЕНИЙ ДАТ
+    FROMDATE = I_ONDATE - INTERVAL '1 MONTH';
+    TODATE = I_ONDATE - INTERVAL '1 DAY';
+    PREVDATE = FROMDATE - INTERVAL '1 DAY';
+
+    -- ОЧИСТКА ДАННЫХ ЗА УКАЗАННЫЙ ПЕРИОД
+    DELETE FROM DM.DM_F101_ROUND_F 
+    WHERE FROM_DATE = FROMDATE 
+    AND TO_DATE = TODATE;
+
+	-- ВРЕМЯ НАЧАЛА ВСТАВКИ
+    START_TIME = CLOCK_TIMESTAMP();
+
+    -- ВСТАВКА НОВЫХ ДАННЫХ
+    INSERT INTO DM.DM_F101_ROUND_F (
+        FROM_DATE, TO_DATE, CHAPTER, LEDGER_ACCOUNT, CHARACTERISTIC,
+        BALANCE_IN_RUB, BALANCE_IN_VAL, BALANCE_IN_TOTAL,
+        TURN_DEB_RUB, TURN_DEB_VAL, TURN_DEB_TOTAL,
+        TURN_CRE_RUB, TURN_CRE_VAL, TURN_CRE_TOTAL,
+        BALANCE_OUT_RUB, BALANCE_OUT_VAL, BALANCE_OUT_TOTAL
+    )
+    SELECT
+        FROMDATE AS FROM_DATE,
+        TODATE AS TO_DATE,
+        LAS.CHAPTER,
+        LAS.LEDGER_ACCOUNT,
+        AD.CHAR_TYPE AS CHARACTERISTIC,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE IN ('810', '643')
+                THEN COALESCE(ABF1.BALANCE_OUT_RUB, 0)
+                ELSE 0
+            END
+        ) AS BALANCE_IN_RUB,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE NOT IN ('810', '643')
+                THEN COALESCE(ABF1.BALANCE_OUT_RUB, 0)
+                ELSE 0
+            END
+        ) AS BALANCE_IN_VAL,
+        SUM(COALESCE(ABF1.BALANCE_OUT_RUB, 0)) AS BALANCE_IN_TOTAL,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE IN ('810', '643') 
+                THEN COALESCE(ATF.DEBET_AMOUNT_RUB, 0)
+                ELSE 0
+            END
+        ) AS TURN_DEB_RUB,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE NOT IN ('810', '643') 
+                THEN COALESCE(ATF.DEBET_AMOUNT_RUB, 0)
+                ELSE 0
+            END
+        ) AS TURN_DEB_VAL,
+        SUM(COALESCE(ATF.DEBET_AMOUNT_RUB, 0)) AS TURN_DEB_TOTAL,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE IN ('810', '643') 
+                THEN COALESCE(ATF.CREDIT_AMOUNT_RUB, 0)
+                ELSE 0
+            END
+        ) AS TURN_CRE_RUB,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE NOT IN ('810', '643') 
+                THEN COALESCE(ATF.CREDIT_AMOUNT_RUB, 0)
+                ELSE 0
+            END
+        ) AS TURN_CRE_VAL,
+        SUM(COALESCE(ATF.CREDIT_AMOUNT_RUB, 0)) AS TURN_CRE_TOTAL,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE IN ('810', '643')
+                THEN COALESCE(ABF2.BALANCE_OUT_RUB, 0)
+                ELSE 0
+            END
+        ) AS BALANCE_OUT_RUB,
+        SUM(
+            CASE
+                WHEN AD.CURRENCY_CODE NOT IN ('810', '643')
+                THEN COALESCE(ABF2.BALANCE_OUT_RUB, 0)
+                ELSE 0
+            END
+        ) AS BALANCE_OUT_VAL,
+        SUM(COALESCE(ABF2.BALANCE_OUT_RUB, 0)) AS BALANCE_OUT_TOTAL
+    FROM
+        DS.MD_LEDGER_ACCOUNT_S LAS
+        LEFT JOIN DS.MD_ACCOUNT_D AD ON LAS.LEDGER_ACCOUNT = CAST(SUBSTRING(AD.ACCOUNT_NUMBER, 1, 5) AS INTEGER)
+        LEFT JOIN DM.DM_ACCOUNT_BALANCE_F ABF1 ON ABF1.ACCOUNT_RK = AD.ACCOUNT_RK AND ABF1.ON_DATE = PREVDATE
+        LEFT JOIN DM.DM_ACCOUNT_TURNOVER_F ATF ON ATF.ACCOUNT_RK = AD.ACCOUNT_RK AND ATF.ON_DATE BETWEEN FROMDATE AND TODATE
+        LEFT JOIN DM.DM_ACCOUNT_BALANCE_F ABF2 ON ABF2.ACCOUNT_RK = AD.ACCOUNT_RK AND ABF2.ON_DATE = TODATE
+    WHERE
+        AD.DATA_ACTUAL_DATE <= FROMDATE
+        AND AD.DATA_ACTUAL_END_DATE >= TODATE
+    GROUP BY
+        LAS.CHAPTER,
+        LAS.LEDGER_ACCOUNT,
+        AD.CHAR_TYPE;
+
+	-- ВРЕМЯ КОНЦА ВСТАВКИ
+    END_TIME = CLOCK_TIMESTAMP();
+
+    -- ЗАПИСЬ В ЛОГИ
+    INSERT INTO LOGS.TURNOVER_BALANCE_F101 (DM_NAME, OPER_DATE, START_TIME, END_TIME)
+    VALUES ('DM_F101_ROUND_F', I_ONDATE, START_TIME, END_TIME);
+END $$;
